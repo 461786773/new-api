@@ -126,7 +126,7 @@ export function Footer(props: FooterProps) {
   if (footerHtml) {
     return (
       <div
-        className='custom-footer w-full'
+        className='custom-footer flex w-full justify-center text-center'
         dangerouslySetInnerHTML={{ __html: footerHtml }}
       />
     )
