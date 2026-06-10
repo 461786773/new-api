@@ -1,44 +1,29 @@
 # Remove Classic Frontend (`web/classic`) — Agent Checklist
 
+> **Status:** ✅ Completed (2026-06-10)  
 > **Purpose:** Remove the legacy classic frontend and all runtime/build references.  
-> **Target branch baseline:** `main` (line numbers verified against current tree).  
-> **Do NOT** delete `web/classic/` until P0–P1 backend/build changes are complete.
+> **Result:** Only `web/default` remains; runtime theme switching removed.
 
 ---
 
-## Execution Order
+## Completion Summary
 
-1. P0 — Go backend embed & routing (required for `go build`)
-2. P1 — Dockerfile / makefile / CI
-3. P2 — Theme defaults & option validation
-4. P3 — Default frontend settings UI & i18n
-5. P4 — Docs / gitignore / optional comment cleanup
-6. P5 — `git rm -r web/classic`
-7. P6 — DB migration: `theme.frontend` `classic` → `default`
+| Phase | Status | Notes |
+|-------|--------|-------|
+| P0 — Go backend embed & routing | ✅ Done | `ThemeAssets` simplified; `NoRoute` always serves `DefaultIndexPage` |
+| P1 — Dockerfile / makefile / CI | ✅ Done | `builder-classic` stage removed; CI classic build steps removed |
+| P2 — Default frontend settings UI | ✅ Done | Frontend Theme selector removed from system settings |
+| P3 — i18n cleanup | ✅ Done | Classic-related keys removed from 6 locale files |
+| P4 — Docs / agent tools | ✅ Done | `CLAUDE.md`, `AGENTS.md` updated; `classic-to-default-sync` skill deleted |
+| P5 — Comment cleanup | ✅ Done | 7 files updated |
+| P6 — Directory deletion | ✅ Done | `git rm -r web/classic` |
+| P7 — DB migration | ✅ Done | Auto-migration in `model/option.go` (`migrateClassicThemeOption`) |
 
 ---
 
-## P0 — Go Backend (Required)
+## Key Post-Change Architecture
 
-| File | Lines | Action | Symbol / Snippet |
-|------|-------|--------|------------------|
-| `main.go` | 43–47 | **Delete** | `//go:embed web/classic/dist`, `classicBuildFS`, `classicIndexPage` |
-| `main.go` | 195–196 | **Delete** | `ClassicBuildFS`, `ClassicIndexPage` in `router.ThemeAssets{...}` |
-| `main.go` | 230 | **Delete** | `classicIndexPage = bytes.ReplaceAll(classicIndexPage, ...)` (Umami) |
-| `main.go` | 254 | **Delete** | `classicIndexPage = bytes.ReplaceAll(classicIndexPage, ...)` (Google Analytics) |
-| `router/web-router.go` | 16 | **Edit** | Comment: "both themes" → single theme |
-| `router/web-router.go` | 20–21 | **Delete** | `ClassicBuildFS`, `ClassicIndexPage` fields |
-| `router/web-router.go` | 26–27 | **Delete** | `classicFS`, `NewThemeAwareFS` — use `defaultFS` directly |
-| `router/web-router.go` | 32 | **Edit** | `static.Serve("/", themeFS)` → `static.Serve("/", defaultFS)` |
-| `router/web-router.go` | 40–44 | **Simplify** | Remove `if common.GetTheme() == "classic"` branch; always serve `DefaultIndexPage` |
-| `common/embed-file-system.go` | 45–69 | **Delete** | Entire `themeAwareFileSystem` + `NewThemeAwareFS` |
-| `common/constants.go` | 24 | **Edit** | `themeValue.Store("classic")` → `"default"` |
-| `common/constants.go` | 32–35 | **Edit** | `SetTheme`: remove `"classic"` acceptance |
-| `setting/system_setting/theme.go` | 13 | **Edit** | `Frontend: "classic"` → `"default"` |
-| `controller/option.go` | 201–208 | **Edit** | `theme.frontend` case: remove `classic` from valid values & error message |
-| `controller/misc.go` | 64 | **Optional** | `"theme"` field in `/api/status` — keep or hardcode `"default"` |
-
-### Post-P0 `router/web-router.go` shape (reference)
+### `router/web-router.go`
 
 ```go
 type ThemeAssets struct {
@@ -48,119 +33,89 @@ type ThemeAssets struct {
 
 func SetWebRouter(router *gin.Engine, assets ThemeAssets) {
 	defaultFS := common.EmbedFolder(assets.DefaultBuildFS, "web/default/dist")
-	// static.Serve + NoRoute always uses DefaultIndexPage
+	router.Use(static.Serve("/", defaultFS))
+	router.NoRoute(/* ... always serve assets.DefaultIndexPage */)
 }
 ```
 
----
+### Theme defaults
 
-## P1 — Build / CI / Dev
+- `common/constants.go`: default theme `"default"`; `SetTheme` only accepts `"default"`
+- `setting/system_setting/theme.go`: `Frontend: "default"`
+- `controller/option.go`: `theme.frontend` only accepts `"default"`
 
-| File | Lines | Action | Symbol / Snippet |
-|------|-------|--------|------------------|
-| `makefile` | 2 | **Delete** | `FRONTEND_CLASSIC_DIR = ./web/classic` |
-| `makefile` | 5 | **Edit** | Remove `build-frontend-classic`, `dev-web-classic` from `.PHONY` |
-| `makefile` | 13–15 | **Delete** | `build-frontend-classic:` target |
-| `makefile` | 17 | **Edit** | `build-all-frontends` — only `build-frontend` |
-| `makefile` | 31–33 | **Delete** | `dev-web-classic:` target |
-| `Dockerfile` | 11–19 | **Delete** | Entire `builder-classic` stage |
-| `Dockerfile` | 36 | **Delete** | `COPY --from=builder-classic /build/dist ./web/classic/dist` |
-| `Dockerfile.dev` | 19–21 | **Edit** | Remove `web/classic/dist` mkdir & placeholder `index.html` |
-| `.github/workflows/release.yml` | 40–47 | **Delete** | Step `Build Frontend (classic)` (job 1) |
-| `.github/workflows/release.yml` | 98–105 | **Delete** | Step `Build Frontend (classic)` (job 2) |
-| `.github/workflows/release.yml` | 153–160 | **Delete** | Step `Build Frontend (classic)` (job 3) |
-| `.gitignore` | 12 | **Delete** | `web/classic/dist` |
+### DB migration (startup)
 
----
+`model/option.go` → `migrateClassicThemeOption()`:
 
-## P2 — Default Frontend (`web/default`)
+- Runs after `loadOptionsFromDatabase()`
+- If `theme.frontend == "classic"`, updates to `"default"` via `UpdateOption`
 
-| File | Lines | Action | Symbol / Snippet |
-|------|-------|--------|------------------|
-| `web/default/src/features/system-settings/general/system-info-section.tsx` | 33 | **Edit** | `z.enum(['default', 'classic'])` → `z.literal('default')` or remove theme field |
-| `web/default/src/features/system-settings/general/system-info-section.tsx` | 65–66 | **Delete** | `frontend === 'classic' ? 'classic' : 'default'` |
-| `web/default/src/features/system-settings/general/system-info-section.tsx` | 83 | **Edit** | Same enum change as line 33 |
-| `web/default/src/features/system-settings/general/system-info-section.tsx` | 133–162 | **Delete or simplify** | Entire `theme.frontend` `FormField` (Frontend Theme selector) |
-| `web/default/src/features/system-settings/general/system-info-section.tsx` | 149–151 | **Delete** | `<SelectItem value='classic'>` |
-| `web/default/src/features/system-settings/general/system-info-section.tsx` | 155–157 | **Delete** | Classic switch description `t('Switch between...')` |
-| `web/default/src/features/system-settings/general/section-registry.tsx` | 19 | **Edit** | `as 'default' \| 'classic'` → `'default'` |
-| `web/default/src/features/system-settings/types.ts` | 31 | **Optional** | `'theme.frontend': string` — narrow or remove |
-| `web/default/src/features/system-settings/general/index.tsx` | 12 | **Keep** | `'theme.frontend': 'default'` (default is already correct) |
-| `web/default/src/features/system-settings/hooks/use-update-option.ts` | 9 | **Optional** | `'theme.frontend'` in refresh keys — remove if theme option removed |
-
----
-
-## P3 — i18n (Optional cleanup)
-
-Remove unused keys from **all** locale files under `web/default/src/i18n/locales/`:
-
-| File | Lines | Key to remove |
-|------|-------|---------------|
-| `en.json` | 603 | `"Classic (Legacy Frontend)"` |
-| `en.json` | 3284 | `"Switch between the new frontend and the classic frontend. Changes take effect after page reload."` |
-| `zh.json` | 603, 3284 | Same keys (Chinese translations) |
-| `ja.json` | 603, 3284 | Same keys |
-| `fr.json` | 603, 3284 | Same keys |
-| `ru.json` | 603, 3284 | Same keys |
-| `vi.json` | 603, 3284 | Same keys |
-
----
-
-## P4 — Documentation & Agent Tools
-
-| File | Lines | Action |
-|------|-------|--------|
-| `CLAUDE.md` | 38 | **Delete** line: `web/classic/ — Classic frontend ...` |
-| `AGENTS.md` | 38 | **Delete** line: `web/classic/ — Classic frontend ...` |
-| `.agents/skills/classic-to-default-sync/SKILL.md` | 1–end | **Delete entire file** |
-
----
-
-## P5 — Optional Comment-Only References (non-blocking)
-
-These files only mention "classic" in comments; safe to clean after main removal:
-
-| File | Lines | Note |
-|------|-------|------|
-| `web/default/src/features/pricing/lib/billing-expr.ts` | 4 | Comment: "classic frontend" |
-| `web/default/src/features/system-settings/models/constants.ts` | 13 | Comment: "classic frontend" |
-| `web/default/src/features/usage-logs/lib/format.ts` | 169, 197 | Comments: "classic frontend" |
-| `web/default/src/features/dashboard/api.ts` | 13 | Comment: "classic frontend behavior" |
-| `web/default/src/features/dashboard/lib/charts.ts` | 307 | Comment: "legacy frontend" |
-| `web/default/src/lib/time.ts` | 100 | Comment: "legacy frontend behavior" |
-| `web/default/src/features/system-settings/models/tiered-pricing-editor.tsx` | 607 | Comment: "classic editor" |
-
----
-
-## P6 — Directory Deletion (Last Step)
-
-```bash
-git rm -r web/classic
-```
-
-| Path | Action |
-|------|--------|
-| `web/classic/` | **Delete entire directory** (~400+ source files) |
-
-**Pre-delete verification:**
-
-```bash
-rg "web/classic|ClassicBuild|ClassicIndex|classicFS|classicIndex" --glob '!web/classic/**' .
-# Expected: no matches (except this checklist file)
-```
-
----
-
-## P7 — Database / Runtime Migration
-
-No source line — apply at deploy time:
+Manual SQL (optional, if migration already ran in app):
 
 ```sql
--- SQLite / MySQL / PostgreSQL (table/column names per your GORM model)
 UPDATE options SET value = 'default' WHERE key = 'theme.frontend' AND value = 'classic';
 ```
 
-Optional: add one-time migration in Go startup if `theme.frontend == classic`.
+---
+
+## Files Changed
+
+### Backend
+
+| File | Change |
+|------|--------|
+| `main.go` | Removed classic embed vars and analytics injection |
+| `router/web-router.go` | Single-theme static serving |
+| `common/embed-file-system.go` | Removed `themeAwareFileSystem` / `NewThemeAwareFS` |
+| `common/constants.go` | Default theme `"default"` |
+| `setting/system_setting/theme.go` | Default `Frontend: "default"` |
+| `controller/option.go` | `theme.frontend` validation: `default` only |
+| `model/option.go` | Added `migrateClassicThemeOption()` |
+
+### Build / CI
+
+| File | Change |
+|------|--------|
+| `makefile` | Removed `FRONTEND_CLASSIC_DIR`, `build-frontend-classic`, `dev-web-classic` |
+| `Dockerfile` | Removed `builder-classic` stage and classic dist COPY |
+| `Dockerfile.dev` | Removed `web/classic/dist` placeholder |
+| `.github/workflows/release.yml` | Removed classic frontend build steps (3 jobs) |
+| `.gitignore` | Removed `web/classic/dist` |
+
+### Frontend (`web/default`)
+
+| File | Change |
+|------|--------|
+| `system-info-section.tsx` | Removed theme field and Frontend Theme selector |
+| `section-registry.tsx` | Removed `theme.frontend` from `SystemInfoSection` props |
+| `i18n/locales/{en,zh,ja,fr,ru,vi}.json` | Removed Classic theme i18n keys |
+| 7 comment-only files | Cleaned "classic frontend" references |
+
+### Docs / tools
+
+| File | Change |
+|------|--------|
+| `CLAUDE.md` | Removed `web/classic/` from architecture tree |
+| `AGENTS.md` | Removed `web/classic/` from architecture tree |
+| `.agents/skills/classic-to-default-sync/SKILL.md` | Deleted |
+
+### Deleted
+
+| Path | Change |
+|------|--------|
+| `web/classic/` | Entire directory removed (~400+ files) |
+
+---
+
+## Left Unchanged (intentional)
+
+| Item | Reason |
+|------|--------|
+| `controller/misc.go` — `"theme"` in `/api/status` | Kept; returns `system_setting.GetThemeSettings().Frontend` (always `"default"` after migration) |
+| `web/default/.../types.ts` — `'theme.frontend': string` | Kept for API compatibility |
+| `use-update-option.ts` — `'theme.frontend'` refresh key | Kept; harmless if option never updated from UI |
+| `change.patch` | Historical patch file still references `web/classic`; not part of runtime |
 
 ---
 
@@ -170,39 +125,13 @@ Optional: add one-time migration in Go startup if `theme.frontend == classic`.
 |------|------------------|----------|
 | Go build | `go build -o new-api .` | Success (no embed errors) |
 | Default FE build | `cd web/default && bun install && bun run build` | Success |
+| Frontend typecheck | `cd web/default && bun run typecheck` | Success ✅ (verified) |
 | Docker | `docker build -t new-api .` | Success (no builder-classic) |
 | Runtime | Open `/`, `/dashboard`, `/sign-in` | Default UI loads |
 | SPA refresh | Hard refresh on nested routes | No 404 |
 | API | `GET /api/status` → `theme` | `"default"` |
-| Settings UI | System settings | No Classic theme option |
-
----
-
-## Quick Reference — All Files to Touch
-
-```
-main.go
-router/web-router.go
-common/embed-file-system.go
-common/constants.go
-setting/system_setting/theme.go
-controller/option.go
-controller/misc.go                          # optional
-makefile
-Dockerfile
-Dockerfile.dev
-.github/workflows/release.yml
-.gitignore
-web/default/src/features/system-settings/general/system-info-section.tsx
-web/default/src/features/system-settings/general/section-registry.tsx
-web/default/src/features/system-settings/types.ts              # optional
-web/default/src/features/system-settings/hooks/use-update-option.ts  # optional
-web/default/src/i18n/locales/{en,zh,ja,fr,ru,vi}.json       # optional
-CLAUDE.md
-AGENTS.md
-.agents/skills/classic-to-default-sync/SKILL.md               # delete
-web/classic/                                                  # delete last
-```
+| Settings UI | System settings → General | No Classic theme option |
+| Grep | `rg "web/classic\|ClassicBuild\|classicFS" --glob '!change.patch' .` | No matches (except this file) |
 
 ---
 
@@ -210,6 +139,6 @@ web/classic/                                                  # delete last
 
 - Go single-line comments: `//`
 - Go multi-line comments: `/* */`
-- Do **not** delete `web/classic/` before removing `//go:embed web/classic/dist` from `main.go` — build will fail.
-- Default theme in DB may still be `classic`; change to `default` before or during deploy.
+- **Do not** re-add `//go:embed web/classic/dist` — `web/classic/` no longer exists.
+- Browser tab title comes from **System Name** (`SystemName` option), set via `document.title` in `web/default/src/main.tsx` from `/api/status` → `system_name`.
 - `electron/` is unrelated to classic theme switching; no changes required unless separately scoped.
