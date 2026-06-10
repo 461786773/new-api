@@ -304,7 +304,7 @@ export function processChartData(
       const stats = timeModelMap.get(time)?.get(model)
       const rawQuota = Number(stats?.quota) || 0
       const usd = rawQuota ? rawQuota / quotaPerUnit : 0
-      // Match legacy frontend getQuotaWithUnit(..., 4)
+      // Match getQuotaWithUnit(..., 4) precision
       const usage = usd ? Number(usd.toFixed(4)) : 0
       return {
         Time: time,

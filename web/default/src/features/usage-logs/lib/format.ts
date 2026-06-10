@@ -166,7 +166,7 @@ export function decodeBillingExprB64(exprB64: string | undefined): string {
 /**
  * Resolve which parsed tier corresponds to the matched_tier label in a log
  * entry. Falls back to the first tier when the label is missing or unknown,
- * which mirrors the behaviour of the classic frontend renderer.
+ * which mirrors the legacy log renderer behaviour.
  */
 export function resolveMatchedTier(
   tiers: ParsedTier[],
@@ -194,7 +194,7 @@ export interface TieredBillingSummary {
 /**
  * Whether the request payload reports any cache-related token usage. Used to
  * suppress cache pricing rows from the tiered breakdown when the request did
- * not exercise the cache path (mirrors the classic frontend behaviour).
+ * not exercise the cache path (mirrors the legacy log renderer behaviour).
  */
 export function hasAnyCacheTokens(
   other: LogOtherData | null | undefined

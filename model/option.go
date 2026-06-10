@@ -196,6 +196,18 @@ func loadOptionsFromDatabase() {
 			common.SysLog("failed to update option map: " + err.Error())
 		}
 	}
+	migrateClassicThemeOption()
+}
+
+func migrateClassicThemeOption() {
+	if common.OptionMap["theme.frontend"] != "classic" {
+		return
+	}
+	if err := UpdateOption("theme.frontend", "default"); err != nil {
+		common.SysLog("failed to migrate theme.frontend from classic to default: " + err.Error())
+		return
+	}
+	common.SysLog("migrated theme.frontend from classic to default")
 }
 
 func SyncOptions(frequency int) {
